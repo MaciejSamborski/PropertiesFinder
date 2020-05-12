@@ -11,6 +11,7 @@ using System.Linq;
 using System.Text.Encodings;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Globalization;
 
 namespace SprzedawaczIntegration
 {
@@ -26,6 +27,7 @@ namespace SprzedawaczIntegration
         // Jeśli chcesz przejrzeć pozostałe ogłoszenia skorzystaj z wyszukiwarki, filtrów
         // lub ogranicz lokalizację."
         const int maxPages = 100;
+        private const NumberStyles style = NumberStyles.AllowDecimalPoint;
 
         public WebPage WebPage { get; }
         public IDumpsRepository DumpsRepository { get; }
@@ -119,7 +121,7 @@ namespace SprzedawaczIntegration
                 OfferDetails = new OfferDetails
                 {
                     Url = url,
-                    CreationDateTime = DateTime.Now,
+                    CreationDateTime = DateTime.Parse(offerToParse.QuerySelector(".ann-panel-right p:last-of-type b:last-of-type").Text()),
                     OfferKind = kind,
                     SellerContact = new SellerContact
                     {
@@ -153,17 +155,27 @@ namespace SprzedawaczIntegration
                     Balconies = Regex.IsMatch(description, "(B|b)alkony?") ? 1 : default,
                     BasementArea = null,
                     GardenArea = TryGetParagraphValueDecimal(paragraphs, "Pow. działki:"),
-                    IndoorParkingPlaces = null,
-                    OutdoorParkingPlaces = null
+                    //May cause false possitives
+                    IndoorParkingPlaces = Regex.IsMatch(description, "(G|g)araż") ? 1 : default,
+                    OutdoorParkingPlaces = Regex.IsMatch(description, "(M|m)iejsce parkingowe") ? 1 : default
                 },
                 PropertyPrice = new PropertyPrice
                 {
                     PricePerMeter = TryGetParagraphValueDecimal(paragraphs, "Cena za m2:"),
+                    //No field, hard to guess from description
                     ResidentalRent = null,
-                    TotalGrossPrice = decimal.Parse(Regex.Matches(offerToParse.QuerySelector(".c > .r > div.text-right > h2").Text(), "[0-9 ]+").Select(m => m.Value).Aggregate((i,j) => i+j).Replace(" ",""))
+                    TotalGrossPrice = GetPrice(offerToParse.QuerySelector(".c > .r > div.text-right > h2").Text())
                 },
                 RawDescription = description
             };
+        }
+
+        private decimal GetPrice(string str)
+        {
+            var possiblyEmpty = Regex.Matches(str, @"[0-9 \.]+").Select(m => m.Value).Aggregate((i, j) => i + j).Replace(" ", "");
+            if (possiblyEmpty == "")
+                return 0;
+            return decimal.Parse(possiblyEmpty, style);
         }
 
         private string TryGetParagraphValueString(IHtmlCollection<IElement> paragraphs, string small)
@@ -184,10 +196,10 @@ namespace SprzedawaczIntegration
 
         private decimal TryGetParagraphValueDecimal(IHtmlCollection<IElement> paragraphs, string small)
         {
-            var str = MatchOrNull(TryGetParagraphValueString(paragraphs, small), @"[0-9]+\.?[0-9]+")?.Value;
+            var str = MatchOrNull(TryGetParagraphValueString(paragraphs, small), @"[0-9]+\.?[0-9]+")?.Value.Replace(".",",");
             if (str == null || str == "")
                 return default;
-            return decimal.Parse(str);
+            return decimal.Parse(str, style);
         }
 
         private IDocument GetParsedHtmlFromUrl(string url)
